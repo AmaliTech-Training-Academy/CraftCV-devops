@@ -67,3 +67,15 @@ variable "github_token_secret_name" {
 # No coverage_min variable: CraftCV-backend's gate is `manage.py test`, which
 # enforces no coverage threshold. Add one here only if the suite moves to a
 # runner that measures coverage.
+
+# --- Deployment (Phase 6) -------------------------------------------------
+
+# Note the name: this directory holds the *application* checkout, despite
+# being called CraftCV-devops. It was cloned under the wrong name before this
+# phase and is left alone rather than renamed, because the running compose
+# stack refers to it. Worth correcting the next time the box is rebuilt.
+variable "deploy_app_dir" {
+  description = "Directory on the instance that docker compose runs from"
+  type        = string
+  default     = "/opt/craftcv/CraftCV-devops"
+}

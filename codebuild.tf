@@ -189,17 +189,21 @@ resource "aws_iam_role_policy" "codebuild" {
         Resource = data.aws_secretsmanager_secret.github_token.arn
       },
 
-      # --- Deployment (next phase) -----------------------------------------
+      # --- Deployment ------------------------------------------------------
       # Deploys run as an SSM command on the app instance, so there is still
-      # no SSH key and no inbound port 22. Scoped to the one instance and the
-      # one SSM document we actually invoke.
+      # no SSH key and no inbound port 22.
+      #
+      # Scoped to the craftcv-deploy document specifically, NOT to
+      # AWS-RunShellScript. That distinction is the whole point: the build
+      # role can run the reviewed deploy procedure on one instance, and
+      # cannot run arbitrary shell anywhere.
       {
-        Sid    = "DeployViaSsmRunCommand"
+        Sid    = "DeployViaSsmDocument"
         Effect = "Allow"
         Action = "ssm:SendCommand"
         Resource = [
           "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:instance/${aws_instance.craftcv_app.id}",
-          "arn:aws:ssm:${data.aws_region.current.name}::document/AWS-RunShellScript"
+          aws_ssm_document.deploy.arn
         ]
       },
       {
@@ -267,6 +271,20 @@ resource "aws_codebuild_project" "backend_ci" {
     environment_variable {
       name  = "ECR_REPOSITORY_URL"
       value = aws_ecr_repository.app.repository_url
+    }
+
+    # Consumed by the deploy step in buildspec.yml.
+    environment_variable {
+      name  = "DEPLOY_DOCUMENT_NAME"
+      value = aws_ssm_document.deploy.name
+    }
+    environment_variable {
+      name  = "DEPLOY_INSTANCE_ID"
+      value = aws_instance.craftcv_app.id
+    }
+    environment_variable {
+      name  = "DEPLOY_BRANCH"
+      value = var.github_default_branch
     }
   }
 

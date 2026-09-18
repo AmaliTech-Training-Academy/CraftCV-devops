@@ -11,7 +11,9 @@ Terraform for the CraftCV platform. Everything lives in **eu-west-1**.
 | `ec2.tf`           | The app server (Ubuntu 22.04, `t3.micro`)                        |
 | `ecr.tf`           | Private Docker registry CI pushes to                             |
 | `codebuild.tf`     | Phase 5 - the CI project, its service role and GitHub connection |
-| `outputs.tf`       | Instance/SG IDs, CI project name, ECR URL, connection status     |
+| `deploy.tf`        | Phase 6 - the SSM document that deploys to the instance          |
+| `scripts/`         | The deploy shell script the SSM document runs                    |
+| `outputs.tf`       | Instance/SG IDs, CI project name, ECR URL, deploy document       |
 
 Administration is via **SSM Session Manager**, not SSH. There is no key pair
 and port 22 is never open.
@@ -256,3 +258,86 @@ gates. Both will run on every PR until one is retired - deliberate during the
 migration, since it proves the CodeBuild project agrees with Actions before
 anyone depends on it. Delete the workflow once the required status check has
 been switched over.
+
+---
+
+## Phase 6 - Continuous deployment over SSM
+
+```
+merge to develop -> CodeBuild (gates + image) -> ssm:SendCommand
+    -> craftcv-deploy document on i-… -> fetch/reset -> compose build
+       -> migrate -> recreate web -> health check
+```
+
+No SSH, no key pair, port 22 closed. Every deploy is an SSM command, so it is
+attributable in CloudTrail and its output is captured in the build log.
+
+### Why a document and not a script on the box
+
+The procedure lives in `scripts/ssm-deploy.sh`, wrapped by the
+`craftcv-deploy` SSM document in `deploy.tf`. Two reasons over a script
+maintained on the instance:
+
+- What runs is version controlled and reviewed here, not edited in place over
+  a shell session with no record of who changed it.
+- The CodeBuild role can be granted `ssm:SendCommand` on **this document
+  only**, rather than on `AWS-RunShellScript`. Scoping to the general shell
+  document would let the build role run any command on the instance; scoping
+  to this one lets it run exactly the reviewed deploy.
+
+Document parameters are constrained by `allowedPattern`, so `CommitSha` must
+look like a SHA before it ever reaches bash.
+
+### What the deploy does
+
+1. Takes the deployment lock (`flock` on `/var/lock/craftcv-deploy.lock`),
+   waiting up to 600s. Two merges landing together queue rather than run
+   `git reset` over each other. Exit code 75 means the lock was never free.
+2. Rewrites the git remote to the canonical URL - idempotent, and it scrubs
+   any credential a previous setup embedded there.
+3. Fetches `origin/develop` and **refuses to continue unless the requested
+   commit is an ancestor of it**, so the document cannot be used to pin the
+   box to an arbitrary revision.
+4. `git reset --hard` to that commit. Deliberately never `git clean`: `.env`
+   is untracked and holds the database credentials.
+5. `docker compose build web`, start `db`, wait for it to report healthy.
+6. Migrations, then recreate `web`. In that order, so new code never serves
+   traffic against an unmigrated schema.
+7. Polls `http://127.0.0.1:8000/` for up to 60s. Any status below 500 counts
+   as alive - a 404 on `/` is expected, since nothing is routed there.
+8. Prunes superseded images. The instance has only a few GB free.
+
+Any failure exits non-zero, and the build fails with it.
+
+### When it deploys
+
+The gate is in `buildspec.yml` and fails closed:
+
+| Trigger | Deploys? |
+| ------- | -------- |
+| Pull request build, any branch | No - event is not `PUSH` |
+| Push to a feature branch | No - wrong ref (and no webhook filter matches) |
+| Push to `main` | No - only `develop` deploys |
+| **Failed** build on `develop` | No - `CODEBUILD_BUILD_SUCCEEDING` is not 1 |
+| **Successful** push to `develop` | **Yes** |
+| Manual build of `develop` | Yes |
+| Manual build of any other branch | No |
+
+CodeBuild polls the command to completion rather than firing and forgetting,
+so a green build means the deploy actually finished. The deploy's stdout and
+stderr are echoed into the build log.
+
+### Running a deploy by hand
+
+```bash
+aws ssm send-command --region eu-west-1   --document-name craftcv-deploy   --instance-ids "$(terraform output -raw instance_id)"   --parameters CommitSha=<full-sha-on-develop>
+```
+
+### Known gap: the ECR image is not what runs
+
+Phase 5 builds and pushes an image to ECR; Phase 6, as specified, does
+`fetch/reset` and rebuilds on the instance. So the artifact CI tested is not
+the artifact serving traffic - they are built from the same commit, but not
+the same bytes. Closing that means pulling the image instead of rebuilding,
+which needs the AWS CLI installed on the instance and an ECR-pull policy on
+its role. Worth doing; out of scope for this phase.

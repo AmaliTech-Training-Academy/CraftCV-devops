@@ -42,3 +42,10 @@ output "ecr_repository_url" {
   description = "Image repository CI pushes to; the deploy step pulls from here"
   value       = aws_ecr_repository.app.repository_url
 }
+
+# --- Deployment (Phase 6) -------------------------------------------------
+
+output "deploy_document_name" {
+  description = "SSM document CodeBuild invokes to deploy"
+  value       = aws_ssm_document.deploy.name
+}
