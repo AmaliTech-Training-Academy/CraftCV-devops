@@ -72,7 +72,7 @@ resource "aws_scheduler_schedule" "sandbox_start" {
     mode = "OFF"
   }
 
-  schedule_expression          = "cron(0 ${var.sandbox_start_hour} ? * ${var.sandbox_schedule_days} *)"
+  schedule_expression          = "cron(0 ${var.sandbox_start_hour} ? * ${var.sandbox_start_days} *)"
   schedule_expression_timezone = var.sandbox_schedule_timezone
 
   target {
@@ -101,7 +101,7 @@ resource "aws_scheduler_schedule" "sandbox_stop" {
     mode = "OFF"
   }
 
-  schedule_expression          = "cron(0 ${var.sandbox_stop_hour} ? * ${var.sandbox_schedule_days} *)"
+  schedule_expression          = "cron(0 ${var.sandbox_stop_hour} ? * ${var.sandbox_stop_days} *)"
   schedule_expression_timezone = var.sandbox_schedule_timezone
 
   target {
