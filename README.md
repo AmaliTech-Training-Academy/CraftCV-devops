@@ -251,13 +251,28 @@ adding a runner that does emit XML needs only a `reports:` block in
 pull request. Turn that into a merge block in GitHub: **Settings → Branches →
 `develop`** → require the `AWS CodeBuild craftcv-backend-ci` status check.
 
-### Overlap with GitHub Actions
+### GitHub Actions is retired
 
-CraftCV-backend still has `.github/workflows/ci.yml` running the same three
-gates. Both will run on every PR until one is retired - deliberate during the
-migration, since it proves the CodeBuild project agrees with Actions before
-anyone depends on it. Delete the workflow once the required status check has
-been switched over.
+CraftCV-backend has no workflows left. `ci.yml`, `deploy.yml` and
+`repository-standards.yml` were all removed; only
+`.github/pull_request_template.md` remains.
+
+CodeBuild runs everything, including the branch-name, commit-subject and
+whitespace checks that `repository-standards.yml` used to do. Those run as the
+first step of the `install` phase in `buildspec.yml`, on pull request builds
+only, and call the repository's own `scripts/validate-conventions.sh` - the
+same script the Git hooks call, so a rejected push and a red build mean the
+same thing.
+
+This is why the project clones with `git_clone_depth = 0`: comparing a pull
+request's commits against its base branch needs real history, and a shallow
+clone has none.
+
+**Branch protection needs updating.** Any required status check still named
+after an Actions job (`lint`, `build-and-test`, `docker`,
+`repository-standards`) will never report again, and will block every pull
+request while it waits. Replace them with the single
+`AWS CodeBuild craftcv-backend-ci` check.
 
 ---
 

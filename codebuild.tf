@@ -312,7 +312,9 @@ resource "aws_codebuild_project" "backend_ci" {
     # branch protection rule block a failing PR from merging.
     report_build_status = true
 
-    git_clone_depth = 1
+    # Full history, not a shallow clone: the convention checks compare the
+    # pull request's commits against its base branch, which needs both.
+    git_clone_depth = 0
   }
 
   source_version = var.github_default_branch
