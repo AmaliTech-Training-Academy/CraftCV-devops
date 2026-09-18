@@ -119,6 +119,24 @@ resource "aws_codebuild_project" "frontend_ci" {
     image_pull_credentials_type = "CODEBUILD"
     # No Docker here, so no privileged container.
     privileged_mode = false
+
+    # Consumed by the deploy step in buildspec.yml.
+    environment_variable {
+      name  = "AWS_DEFAULT_REGION"
+      value = data.aws_region.current.name
+    }
+    environment_variable {
+      name  = "DEPLOY_DOCUMENT_NAME"
+      value = aws_ssm_document.deploy_frontend.name
+    }
+    environment_variable {
+      name  = "DEPLOY_INSTANCE_ID"
+      value = aws_instance.craftcv_app.id
+    }
+    environment_variable {
+      name  = "DEPLOY_BRANCH"
+      value = var.github_default_branch
+    }
   }
 
   cache {

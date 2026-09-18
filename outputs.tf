@@ -61,3 +61,13 @@ output "sandbox_schedule" {
     var.sandbox_schedule_days == "*" ? "every day" : var.sandbox_schedule_days
   )
 }
+
+output "deploy_frontend_document_name" {
+  description = "SSM document the frontend CI invokes to deploy"
+  value       = aws_ssm_document.deploy_frontend.name
+}
+
+output "app_url" {
+  description = "Frontend and API share this origin; it changes when the sandbox restarts"
+  value       = "http://${aws_instance.craftcv_app.public_ip}"
+}

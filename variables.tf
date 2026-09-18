@@ -88,6 +88,18 @@ variable "deploy_app_dir" {
 
 # --- Sandbox schedule -----------------------------------------------------
 
+variable "deploy_frontend_dir" {
+  description = "Frontend checkout on the instance"
+  type        = string
+  default     = "/opt/craftcv/CraftCV-frontend"
+}
+
+variable "frontend_web_root" {
+  description = "Directory nginx serves the generated frontend from"
+  type        = string
+  default     = "/var/www/craftcv"
+}
+
 variable "sandbox_schedule_enabled" {
   description = "Whether the start/stop schedules are active"
   type        = bool
