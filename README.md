@@ -333,6 +333,24 @@ stderr are echoed into the build log.
 aws ssm send-command --region eu-west-1   --document-name craftcv-deploy   --instance-ids "$(terraform output -raw instance_id)"   --parameters CommitSha=<full-sha-on-develop>
 ```
 
+### GitHub credentials on the instance
+
+CraftCV-backend is private, so the deploy's `git fetch` needs a token. The
+instance reads the **same** Secrets Manager secret CodeBuild uses - one
+credential, one place to rotate - and its role is scoped to that one secret.
+
+The token is handed to git through a per-invocation credential helper, so it
+never lands in `.git/config`, never appears in argv, and never touches disk.
+This also means the AWS CLI must be present on the instance; it was installed
+by hand during Phase 6 and should move into user data or the AMI before the
+box is ever rebuilt, or the first deploy on a fresh instance will fail with
+`aws CLI not installed on this instance`.
+
+The repository was public earlier in this project and became private
+mid-phase, which is exactly how this gap was found: a deploy failed with
+`could not read Username for 'https://github.com'`. It failed before touching
+the checkout, which is the behaviour to preserve in any change to the script.
+
 ### Known gap: the ECR image is not what runs
 
 Phase 5 builds and pushes an image to ECR; Phase 6, as specified, does

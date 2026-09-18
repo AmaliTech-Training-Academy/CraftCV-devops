@@ -41,6 +41,18 @@ resource "aws_ssm_document" "deploy" {
         default        = "https://github.com/${var.github_owner}/${var.github_repo}.git"
         allowedPattern = "^https://github[.]com/[A-Za-z0-9._/-]+[.]git$"
       }
+      TokenSecretId = {
+        type           = "String"
+        description    = "Secrets Manager secret holding the GitHub token"
+        default        = var.github_token_secret_name
+        allowedPattern = "^[A-Za-z0-9/_+=.@-]+$"
+      }
+      AwsRegion = {
+        type           = "String"
+        description    = "Region to read the secret from"
+        default        = "eu-west-1"
+        allowedPattern = "^[a-z0-9-]+$"
+      }
       LockWaitSeconds = {
         type           = "String"
         description    = "How long to wait for a concurrent deploy before giving up"

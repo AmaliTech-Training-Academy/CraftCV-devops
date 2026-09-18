@@ -15,6 +15,8 @@ COMMIT_SHA='{{CommitSha}}'
 APP_DIR='{{AppDir}}'
 REPO_URL='{{RepoUrl}}'
 LOCK_WAIT='{{LockWaitSeconds}}'
+TOKEN_SECRET_ID='{{TokenSecretId}}'
+AWS_REGION='{{AwsRegion}}'
 
 LOCK_FILE=/var/lock/craftcv-deploy.lock
 # The checkout is owned by ssm-user but this runs as root, and git refuses to
@@ -43,8 +45,25 @@ cd "${APP_DIR}"
 # previous setup embedded in the remote URL.
 $GIT remote set-url origin "${REPO_URL}"
 
+# --- GitHub credentials ---------------------------------------------------
+# CraftCV-backend is private, so the fetch needs a token. It is read from
+# Secrets Manager at deploy time and used for this process only: handed to
+# git through a per-invocation credential helper, so it is never written into
+# .git/config, never appears in argv where ps could see it, and never touches
+# disk. The instance role grants read on this one secret.
+command -v aws >/dev/null || fail "aws CLI not installed on this instance"
+command -v python3 >/dev/null || fail "python3 not installed on this instance"
+
+GH_TOKEN="$(aws secretsmanager get-secret-value   --secret-id "${TOKEN_SECRET_ID}" --region "${AWS_REGION}"   --query SecretString --output text   | python3 -c 'import sys, json; print(json.load(sys.stdin)["Token"])')"   || fail "could not read the GitHub token from ${TOKEN_SECRET_ID}"
+[ -n "$GH_TOKEN" ] || fail "the GitHub token from ${TOKEN_SECRET_ID} is empty"
+export GH_TOKEN
+
+# Single quotes on purpose: GH_TOKEN is expanded by the helper shell that git
+# invokes, not here, so the value never enters this script's argv.
+CRED_HELPER='!f() { echo username=x-access-token; echo "password=${GH_TOKEN}"; }; f'
+
 log "fetching origin/develop"
-$GIT fetch --prune --quiet origin develop || fail "git fetch failed"
+$GIT -c credential.helper="$CRED_HELPER" fetch --prune --quiet origin develop   || fail "git fetch failed"
 
 # Refuse to deploy a commit that is not on develop. Without this, anything
 # able to call the document could pin the box to an arbitrary revision.
