@@ -20,6 +20,9 @@ locals {
   codebuild_log_group    = "/aws/codebuild/${var.project_name}-backend-ci"
 
   github_repo_url = "https://github.com/${var.github_owner}/${var.github_repo}.git"
+
+  # One regex covering every branch CI watches, used by both webhook filters.
+  ci_branch_regex = "^refs/heads/(${join("|", var.github_ci_branches)})$"
 }
 
 # ---------------------------------------------------------------------------
@@ -250,12 +253,13 @@ resource "aws_codebuild_project" "backend_ci" {
 
   # --- Docker support -----------------------------------------------------
   # privileged_mode is what makes "docker build" possible: it starts the
-  # build container with the Docker daemon available. The standard:7.0 image
-  # already ships the docker CLI and Python 3.11.
+  # build container with the Docker daemon available. standard:8.0 is chosen
+  # over 7.0 for Python 3.12, matching the app's Dockerfile, its Actions
+  # workflow and target-version in its pyproject.toml.
   environment {
     type                        = "LINUX_CONTAINER"
     compute_type                = "BUILD_GENERAL1_SMALL"
-    image                       = "aws/codebuild/standard:7.0"
+    image                       = "aws/codebuild/standard:8.0"
     image_pull_credentials_type = "CODEBUILD"
     privileged_mode             = true
 
@@ -270,10 +274,6 @@ resource "aws_codebuild_project" "backend_ci" {
     environment_variable {
       name  = "ECR_REPOSITORY_URL"
       value = aws_ecr_repository.app.repository_url
-    }
-    environment_variable {
-      name  = "COVERAGE_MIN"
-      value = tostring(var.coverage_min)
     }
   }
 
@@ -304,7 +304,7 @@ resource "aws_codebuild_project" "backend_ci" {
     git_clone_depth = 1
   }
 
-  source_version = var.github_branch
+  source_version = var.github_default_branch
 
   logs_config {
     cloudwatch_logs {
@@ -321,7 +321,8 @@ resource "aws_codebuild_project" "backend_ci" {
 # ---------------------------------------------------------------------------
 # Webhook: what actually makes this continuous integration
 #
-# Builds on every push to main and on every pull request targeting main.
+# Builds on every push to develop or main, and on every pull request
+# targeting either - the same triggers as the repo's Actions workflow.
 # Depends on the source credential, so it is gated the same way.
 # ---------------------------------------------------------------------------
 
@@ -339,7 +340,7 @@ resource "aws_codebuild_webhook" "backend_ci" {
     }
     filter {
       type    = "HEAD_REF"
-      pattern = "^refs/heads/${var.github_branch}$"
+      pattern = local.ci_branch_regex
     }
   }
 
@@ -350,7 +351,7 @@ resource "aws_codebuild_webhook" "backend_ci" {
     }
     filter {
       type    = "BASE_REF"
-      pattern = "^refs/heads/${var.github_branch}$"
+      pattern = local.ci_branch_regex
     }
   }
 

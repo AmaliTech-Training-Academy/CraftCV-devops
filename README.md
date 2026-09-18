@@ -25,18 +25,25 @@ This repo owns the infrastructure; the app repo owns `buildspec.yml` and
 `scripts/quality-gates.sh`.
 
 ```
-push / PR on CraftCV-backend
+push to develop/main, or PR targeting either, on CraftCV-backend
         │  (webhook, via the AWS Connector GitHub App)
         ▼
 craftcv-backend-ci  ── CodeBuild, eu-west-1, privileged_mode = true
         │
-        ├─ scripts/quality-gates.sh   ruff · black · bandit · django checks
-        │                             · migration drift · pytest ≥ 80% cov
-        ├─ docker build               (the image must actually build)
-        └─ docker push                only on a green push to main
+        ├─ sh scripts/check.sh lint    ruff check + ruff format --check
+        ├─ sh scripts/check.sh build   django checks + migration drift
+        ├─ sh scripts/check.sh test    manage.py test (SQLite)
+        ├─ docker build                the image must actually build
+        ├─ docker run … manage.py check   checks pass inside the image too
+        └─ docker push                 only on a green push to develop/main
                 ▼
         ECR  craftcv-backend:<12-char commit sha>
 ```
+
+`scripts/check.sh` is CraftCV-backend's own canonical gate - its Git hooks and
+`.github/workflows/ci.yml` already call it. CodeBuild calls the same entry
+point rather than redefining the gates, which is what keeps a green local run,
+a green Actions run and a green build meaning the same thing.
 
 ### Why a CodeConnections connection
 
@@ -103,13 +110,12 @@ github_connection_authorized = true
 Locally, in CraftCV-backend:
 
 ```bash
-pip install -r requirements-dev.txt
-./scripts/quality-gates.sh
+pip install -r requirements.txt -r requirements-dev.txt
+sh scripts/check.sh all          # or: lint | build | test
 ```
 
-In CI, `buildspec.yml` invokes that exact script - the gates are defined once,
-so a green local run and a green build mean the same thing. Trigger one by
-hand with:
+`buildspec.yml` invokes those same three subcommands. Trigger a build by hand
+with:
 
 ```bash
 aws codebuild start-build \
@@ -117,12 +123,22 @@ aws codebuild start-build \
   --region eu-west-1
 ```
 
-Results, including the pytest and coverage reports, appear under **Report
-groups** in the CodeBuild console. Logs go to
-`/aws/codebuild/craftcv-backend-ci` with 30-day retention.
+Logs go to `/aws/codebuild/craftcv-backend-ci` with 30-day retention. There is
+no **Report groups** entry: `manage.py test` emits no JUnit XML, so failures
+are read from the log. The role already carries the report permissions, so
+adding a runner that does emit XML needs only a `reports:` block in
+`buildspec.yml`.
 
 ### Making the gates enforceable
 
 `report_build_status = true` posts the result back as a commit status on the
 pull request. Turn that into a merge block in GitHub: **Settings → Branches →
-`main`** → require the `AWS CodeBuild craftcv-backend-ci` status check.
+`develop`** → require the `AWS CodeBuild craftcv-backend-ci` status check.
+
+### Overlap with GitHub Actions
+
+CraftCV-backend still has `.github/workflows/ci.yml` running the same three
+gates. Both will run on every PR until one is retired - deliberate during the
+migration, since it proves the CodeBuild project agrees with Actions before
+anyone depends on it. Delete the workflow once the required status check has
+been switched over.

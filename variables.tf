@@ -34,10 +34,25 @@ variable "github_repo" {
   default     = "CraftCV-backend"
 }
 
-variable "github_branch" {
-  description = "Branch CI treats as the mainline (pushes and PR targets)"
+# CraftCV-backend integrates into develop, not main - that is its default
+# branch and what a manual build checks out.
+variable "github_default_branch" {
+  description = "Repository default branch; what a manual build checks out"
   type        = string
-  default     = "main"
+  default     = "develop"
+}
+
+# Matches the Actions workflow, which runs on pushes to main and develop and
+# on every pull request.
+variable "github_ci_branches" {
+  description = "Branches whose pushes, and PR targets, trigger a build"
+  type        = list(string)
+  default     = ["develop", "main"]
+
+  validation {
+    condition     = length(var.github_ci_branches) > 0
+    error_message = "At least one branch must trigger CI."
+  }
 }
 
 # Terraform can create a CodeConnections connection but cannot complete the
@@ -50,13 +65,6 @@ variable "github_connection_authorized" {
   default     = false
 }
 
-variable "coverage_min" {
-  description = "Minimum test coverage percentage; the build fails below this"
-  type        = number
-  default     = 80
-
-  validation {
-    condition     = var.coverage_min >= 0 && var.coverage_min <= 100
-    error_message = "coverage_min must be a percentage between 0 and 100."
-  }
-}
+# No coverage_min variable: CraftCV-backend's gate is `manage.py test`, which
+# enforces no coverage threshold. Add one here only if the suite moves to a
+# runner that measures coverage.
