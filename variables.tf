@@ -36,6 +36,12 @@ variable "github_repo" {
 
 # CraftCV-backend integrates into develop, not main - that is its default
 # branch and what a manual build checks out.
+variable "github_frontend_repo" {
+  description = "Frontend repository CodeBuild runs quality gates on"
+  type        = string
+  default     = "CraftCV-frontend"
+}
+
 variable "github_default_branch" {
   description = "Repository default branch; what a manual build checks out"
   type        = string
