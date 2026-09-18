@@ -79,3 +79,51 @@ variable "deploy_app_dir" {
   type        = string
   default     = "/opt/craftcv/CraftCV-devops"
 }
+
+# --- Sandbox schedule -----------------------------------------------------
+
+variable "sandbox_schedule_enabled" {
+  description = "Whether the start/stop schedules are active"
+  type        = bool
+  default     = true
+}
+
+variable "sandbox_start_hour" {
+  description = "Hour of day the sandbox starts, 0-23, in sandbox_schedule_timezone"
+  type        = number
+  default     = 6
+
+  validation {
+    condition     = var.sandbox_start_hour >= 0 && var.sandbox_start_hour <= 23
+    error_message = "sandbox_start_hour must be an hour between 0 and 23."
+  }
+}
+
+variable "sandbox_stop_hour" {
+  description = "Hour of day the sandbox stops, 0-23, in sandbox_schedule_timezone"
+  type        = number
+  default     = 18
+
+  validation {
+    condition     = var.sandbox_stop_hour >= 0 && var.sandbox_stop_hour <= 23
+    error_message = "sandbox_stop_hour must be an hour between 0 and 23."
+  }
+}
+
+# Africa/Accra, not the eu-west-1 region's local time. The people using this
+# sandbox are in Ghana, and Accra has no daylight saving, so 06:00 stays 06:00
+# all year. Set this to Europe/Dublin if the schedule should instead follow
+# the region, and accept that the wall-clock time then shifts twice a year.
+variable "sandbox_schedule_timezone" {
+  description = "IANA timezone the start/stop hours are interpreted in"
+  type        = string
+  default     = "Africa/Accra"
+}
+
+# Every day by default. Set to "MON-FRI" to leave it off at weekends, which
+# roughly doubles the saving if nobody works then.
+variable "sandbox_schedule_days" {
+  description = "Cron day-of-week field: * for daily, MON-FRI for weekdays"
+  type        = string
+  default     = "*"
+}

@@ -12,6 +12,7 @@ Terraform for the CraftCV platform. Everything lives in **eu-west-1**.
 | `ecr.tf`           | Private Docker registry CI pushes to                             |
 | `codebuild.tf`     | Phase 5 - the CI project, its service role and GitHub connection |
 | `deploy.tf`        | Phase 6 - the SSM document that deploys to the instance          |
+| `schedule.tf`      | Sandbox start/stop schedule, for cost control                    |
 | `scripts/`         | The deploy shell script the SSM document runs                    |
 | `outputs.tf`       | Instance/SG IDs, CI project name, ECR URL, deploy document       |
 
@@ -374,3 +375,47 @@ the artifact serving traffic - they are built from the same commit, but not
 the same bytes. Closing that means pulling the image instead of rebuilding,
 which needs the AWS CLI installed on the instance and an ECR-pull policy on
 its role. Worth doing; out of scope for this phase.
+
+---
+
+## Sandbox schedule
+
+The app server is a sandbox, so it does not need to run overnight. Two
+EventBridge schedules power it on and off:
+
+```
+06:00 Africa/Accra  start  craftcv-app-server
+18:00 Africa/Accra  stop   craftcv-app-server
+```
+
+Twelve hours a day instead of twenty-four, so roughly half the instance cost.
+Change `sandbox_start_hour`, `sandbox_stop_hour`, `sandbox_schedule_days`
+(`MON-FRI` to also skip weekends) or `sandbox_schedule_timezone`, or set
+`sandbox_schedule_enabled = false` to suspend it entirely without destroying
+anything.
+
+The timezone is **Africa/Accra**, not the region's local time. The people
+using this sandbox are in Ghana, and Accra has no daylight saving, so 06:00
+stays 06:00 all year. Following `Europe/Dublin` instead would shift the
+wall-clock times twice a year.
+
+It is two schedules and one IAM role - no Lambda to write and patch, no
+Instance Scheduler stack. EventBridge Scheduler calls `ec2:StartInstances`
+and `ec2:StopInstances` directly through a universal target, and its role is
+scoped to that one instance.
+
+### Three consequences to expect
+
+- **The public IP changes on every restart.** There is no Elastic IP, so
+  anything pointing at the old address breaks each morning. Read the current
+  one from `terraform output instance_public_ip`. An Elastic IP would pin it,
+  but AWS bills for an EIP while it is *not* attached to a running instance,
+  which is exactly the window this schedule creates - so it would eat into
+  the saving it is meant to protect.
+- **Deploys fail while it is off.** `ssm:SendCommand` to a stopped instance
+  goes nowhere, so a merge to develop after 18:00 produces a red build. The
+  build is correct to fail: nothing was deployed. Re-run it after 06:00, or
+  start the instance by hand.
+- **The containers come back on their own.** Both services are
+  `restart: unless-stopped`, so Docker brings them up at boot with no
+  intervention.

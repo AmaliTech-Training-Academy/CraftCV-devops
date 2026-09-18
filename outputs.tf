@@ -49,3 +49,15 @@ output "deploy_document_name" {
   description = "SSM document CodeBuild invokes to deploy"
   value       = aws_ssm_document.deploy.name
 }
+
+output "sandbox_schedule" {
+  description = "When the sandbox instance is powered on"
+  value = format(
+    "%s: up %02d:00, down %02d:00 %s (%s)",
+    var.sandbox_schedule_enabled ? "enabled" : "disabled",
+    var.sandbox_start_hour,
+    var.sandbox_stop_hour,
+    var.sandbox_schedule_timezone,
+    var.sandbox_schedule_days == "*" ? "every day" : var.sandbox_schedule_days
+  )
+}
