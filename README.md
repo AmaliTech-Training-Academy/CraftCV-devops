@@ -4,7 +4,7 @@ Terraform for the CraftCV platform. Everything lives in **eu-west-1**.
 
 | File               | What it defines                                                  |
 | ------------------ | ---------------------------------------------------------------- |
-| `provider.tf`      | AWS provider, pinned to `~> 5.0`; region `eu-west-1`             |
+| `provider.tf`      | AWS provider `~> 5.0`, region `eu-west-1`, and the S3 backend    |
 | `variables.tf`     | VPC/subnet IDs, naming prefix, CI settings                       |
 | `security_group.tf`| App firewall - inbound 80/443 only, no SSH, no Postgres          |
 | `iam.tf`           | EC2 instance role for SSM Session Manager                        |
@@ -16,13 +16,73 @@ Terraform for the CraftCV platform. Everything lives in **eu-west-1**.
 Administration is via **SSM Session Manager**, not SSH. There is no key pair
 and port 22 is never open.
 
+## State
+
+State lives in S3, not in this repository:
+
+```
+s3://craftcv-tfstate-897729111286/craftcv-devops/terraform.tfstate
+```
+
+It used to be a `terraform.tfstate` committed alongside the code. That could
+not be locked, went stale the moment anyone applied, and put a file that can
+contain secrets into git history. The old file is still in the history - treat
+anything it held as needing rotation, not as private.
+
+Locking is S3-native (`use_lockfile = true`, conditional writes), which needs
+Terraform >= 1.10 and replaces the DynamoDB lock table older guides describe.
+One less resource to run, and DynamoDB locking is deprecated.
+
+### Bootstrapping the bucket
+
+The bucket is created outside Terraform on purpose: it has to exist before
+Terraform can store state in it, and managing it from the state it holds makes
+the configuration impossible to destroy cleanly. To recreate it:
+
+```bash
+BUCKET=craftcv-tfstate-897729111286
+
+aws s3api create-bucket --bucket "$BUCKET" --region eu-west-1 \
+  --create-bucket-configuration LocationConstraint=eu-west-1
+
+aws s3api put-bucket-versioning --bucket "$BUCKET" \
+  --versioning-configuration Status=Enabled
+
+aws s3api put-bucket-encryption --bucket "$BUCKET" \
+  --server-side-encryption-configuration \
+  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"},"BucketKeyEnabled":true}]}'
+
+aws s3api put-public-access-block --bucket "$BUCKET" \
+  --public-access-block-configuration \
+  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+```
+
+A bucket policy denying `aws:SecureTransport = false` is also applied, so the
+state can only move over TLS. Versioning is what lets you roll back a bad
+apply, so do not turn it off.
+
+### Running Terraform on this machine
+
+Two things bite on a Windows host with the repo on the WSL filesystem:
+
+- **Run Terraform from inside WSL.** The Windows build fails with
+  `Error acquiring the state lock ... Incorrect function`, because Windows
+  file locking does not work over the `\\wsl.localhost` share.
+- **Export credentials first.** `aws login` stores short-lived credentials
+  under `~/.aws/login/`, which the AWS CLI reads but Terraform's SDK does not.
+  Prefix commands with:
+
+  ```bash
+  eval "$(aws configure export-credentials --format env)"
+  ```
+
 ---
 
 ## Phase 5 - CI in AWS CodeBuild
 
 CI builds [`AmaliTech-Training-Academy/CraftCV-backend`](https://github.com/AmaliTech-Training-Academy/CraftCV-backend).
 This repo owns the infrastructure; the app repo owns `buildspec.yml` and
-`scripts/quality-gates.sh`.
+its own `scripts/check.sh`.
 
 ```
 push to develop/main, or PR targeting either, on CraftCV-backend
@@ -58,7 +118,8 @@ and CI does not break when whoever created it leaves the organization.
 in `codebuild.tf` provide it:
 
 - `environment.privileged_mode = true` - starts the daemon.
-- `aws/codebuild/standard:7.0` - ships the Docker CLI and Python 3.11.
+- `aws/codebuild/standard:8.0` - ships the Docker CLI and Python 3.12,
+  matching the app's Dockerfile and its Actions workflow.
 
 `cache { type = "LOCAL" }` with `LOCAL_DOCKER_LAYER_CACHE` keeps warm layers
 between builds, so repeat builds do not re-download every base image. Local
