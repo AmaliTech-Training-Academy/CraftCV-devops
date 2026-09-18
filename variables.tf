@@ -138,10 +138,97 @@ variable "sandbox_schedule_timezone" {
   default     = "Africa/Accra"
 }
 
-# Every day by default. Set to "MON-FRI" to leave it off at weekends, which
-# roughly doubles the saving if nobody works then.
-variable "sandbox_schedule_days" {
-  description = "Cron day-of-week field: * for daily, MON-FRI for weekdays"
+# Weekdays only. Nobody is working at the weekend, so there is no reason to
+# pay for 24 hours of instance across Saturday and Sunday.
+variable "sandbox_start_days" {
+  description = "Cron day-of-week the sandbox is started on"
+  type        = string
+  default     = "MON-FRI"
+}
+
+# Stop runs EVERY day, deliberately not MON-FRI. If the stop were also
+# weekday-only, an instance started by hand on a Saturday would keep running
+# until Monday evening - the exact runaway this schedule exists to prevent.
+# A stop with nothing to stop is free and harmless.
+variable "sandbox_stop_days" {
+  description = "Cron day-of-week the sandbox is stopped on"
   type        = string
   default     = "*"
+}
+
+# --- Cost guardrail -------------------------------------------------------
+
+# Deliberately tight. A quiet month here is well under a dollar, and the
+# stop/start schedule is meant to keep it that way, so $5 is already an
+# anomaly worth an email. May 2026 reached $36.71 uncredited - that would
+# now trip the forecast alert within the first few days rather than at the
+# end of the month.
+variable "monthly_budget_usd" {
+  description = "Monthly spend that triggers the budget alerts"
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.monthly_budget_usd > 0
+    error_message = "monthly_budget_usd must be greater than zero."
+  }
+}
+
+variable "budget_alert_emails" {
+  description = "Addresses the budget notifications are sent to"
+  type        = list(string)
+  default     = ["ishaque.appiah@amalitech.com"]
+
+  validation {
+    condition     = length(var.budget_alert_emails) > 0
+    error_message = "At least one address must receive budget alerts."
+  }
+}
+
+# --- Backups and project lifetime -----------------------------------------
+
+# 17:45, fifteen minutes before the 18:00 stop. Close enough that the dump
+# reflects a full day's work, far enough that a slow dump is not cut off
+# mid-write by the instance shutting down.
+variable "backup_hour" {
+  description = "Hour the nightly database dump runs, in sandbox_schedule_timezone"
+  type        = number
+  default     = 17
+}
+
+variable "backup_minute" {
+  description = "Minute the nightly database dump runs"
+  type        = number
+  default     = 45
+}
+
+# Two weeks is enough: dumps are a safety net for work happening now, not an
+# archive. Nobody restoring this sandbox wants a three-week-old database.
+#
+# The ceiling is 42 days, the length of the project, and that is the point of
+# the validation: a retention longer than the project would leave data
+# sitting in S3 after the account has been handed back.
+variable "backup_retention_days" {
+  description = "Days a database dump is kept before S3 expires it; must not outlive the project"
+  type        = number
+  default     = 14
+
+  validation {
+    condition     = var.backup_retention_days >= 1 && var.backup_retention_days <= 42
+    error_message = "backup_retention_days must be between 1 and 42 - the project runs six weeks and backups must not outlive it."
+  }
+}
+
+# Recorded as a tag on the resources that cost money, so anyone auditing the
+# account later can see what should already be gone. This is documentation,
+# not automation: nothing destroys itself on this date.
+variable "project_end_date" {
+  description = "Date the sandbox is expected to be torn down (YYYY-MM-DD)"
+  type        = string
+  default     = "2026-10-30"
+
+  validation {
+    condition     = can(regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", var.project_end_date))
+    error_message = "project_end_date must be YYYY-MM-DD."
+  }
 }

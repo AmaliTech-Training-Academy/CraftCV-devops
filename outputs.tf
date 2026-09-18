@@ -58,7 +58,7 @@ output "sandbox_schedule" {
     var.sandbox_start_hour,
     var.sandbox_stop_hour,
     var.sandbox_schedule_timezone,
-    var.sandbox_schedule_days == "*" ? "every day" : var.sandbox_schedule_days
+    var.sandbox_start_days == "*" ? "every day" : var.sandbox_start_days
   )
 }
 
@@ -68,11 +68,31 @@ output "deploy_frontend_document_name" {
 }
 
 output "app_url" {
-  description = "Frontend and API share this origin; it changes when the sandbox restarts"
-  value       = "http://${aws_instance.craftcv_app.public_ip}"
+  description = "Frontend and API share this origin. Stable across restarts."
+  value       = "http://${aws_eip.app.public_ip}"
+}
+
+output "app_hostname" {
+  description = "Permanent AWS hostname for the sandbox; survives stop/start"
+  value       = "ec2-${replace(aws_eip.app.public_ip, ".", "-")}.${data.aws_region.current.name}.compute.amazonaws.com"
+}
+
+output "app_elastic_ip" {
+  description = "Elastic IP attached to the app server"
+  value       = aws_eip.app.public_ip
 }
 
 output "frontend_artifact_bucket" {
   description = "Bucket CI uploads the generated frontend to"
   value       = aws_s3_bucket.frontend_artifacts.id
+}
+
+output "db_backup_bucket" {
+  description = "Bucket the nightly database dumps are written to"
+  value       = aws_s3_bucket.backups.id
+}
+
+output "project_end_date" {
+  description = "Date everything here should be destroyed; nothing enforces this"
+  value       = var.project_end_date
 }
