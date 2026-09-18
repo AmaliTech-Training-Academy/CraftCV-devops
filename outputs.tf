@@ -71,3 +71,8 @@ output "app_url" {
   description = "Frontend and API share this origin; it changes when the sandbox restarts"
   value       = "http://${aws_instance.craftcv_app.public_ip}"
 }
+
+output "frontend_artifact_bucket" {
+  description = "Bucket CI uploads the generated frontend to"
+  value       = aws_s3_bucket.frontend_artifacts.id
+}

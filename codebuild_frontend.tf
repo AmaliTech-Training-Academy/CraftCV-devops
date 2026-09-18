@@ -137,6 +137,10 @@ resource "aws_codebuild_project" "frontend_ci" {
       name  = "DEPLOY_BRANCH"
       value = var.github_default_branch
     }
+    environment_variable {
+      name  = "ARTIFACT_BUCKET"
+      value = aws_s3_bucket.frontend_artifacts.id
+    }
   }
 
   cache {

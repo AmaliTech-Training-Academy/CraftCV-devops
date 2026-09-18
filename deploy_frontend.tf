@@ -17,31 +17,31 @@ resource "aws_ssm_document" "deploy_frontend" {
 
   content = jsonencode({
     schemaVersion = "2.2"
-    description   = "Build and publish CraftCV-frontend from a develop revision"
+    description   = "Publish a CraftCV-frontend build artifact from S3 to nginx"
 
     parameters = {
       CommitSha = {
         type           = "String"
-        description    = "Full commit SHA to deploy; must be an ancestor of origin/develop"
+        description    = "Commit whose build artifact to publish"
         allowedPattern = "^[0-9a-f]{7,40}$"
       }
-      AppDir = {
+      ArtifactBucket = {
         type           = "String"
-        description    = "Frontend checkout on the instance"
-        default        = var.deploy_frontend_dir
-        allowedPattern = "^/[A-Za-z0-9._/-]+$"
-      }
-      RepoUrl = {
-        type           = "String"
-        description    = "Git remote to fetch from"
-        default        = "https://github.com/${var.github_owner}/${var.github_frontend_repo}.git"
-        allowedPattern = "^https://github[.]com/[A-Za-z0-9._/-]+[.]git$"
+        description    = "Bucket the build uploaded the generated site to"
+        default        = aws_s3_bucket.frontend_artifacts.id
+        allowedPattern = "^[a-z0-9.-]{3,63}$"
       }
       WebRoot = {
         type           = "String"
         description    = "Directory nginx serves the generated site from"
         default        = var.frontend_web_root
         allowedPattern = "^/[A-Za-z0-9._/-]+$"
+      }
+      AwsRegion = {
+        type           = "String"
+        description    = "Region the bucket lives in"
+        default        = "eu-west-1"
+        allowedPattern = "^[a-z0-9-]+$"
       }
       LockWaitSeconds = {
         type           = "String"
@@ -56,8 +56,8 @@ resource "aws_ssm_document" "deploy_frontend" {
         action = "aws:runShellScript"
         name   = "deployFrontend"
         inputs = {
-          # npm ci and a Nuxt build on a 1GB instance are not quick.
-          timeoutSeconds = "1800"
+          # A sync of a few hundred KB, not a build.
+          timeoutSeconds = "300"
           runCommand     = split("\n", file("${path.module}/scripts/ssm-deploy-frontend.sh"))
         }
       }
