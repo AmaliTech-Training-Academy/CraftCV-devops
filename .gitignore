@@ -1,0 +1,11 @@
+# Provider plugin cache - hundreds of MB of platform-specific binaries.
+# Reproduced by `terraform init` from .terraform.lock.hcl, which IS committed.
+.terraform/
+
+# Variable files often carry account IDs or credentials.
+*.tfvars
+*.tfvars.json
+!example.tfvars
+
+crash.log
+crash.*.log
