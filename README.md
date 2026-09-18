@@ -12,6 +12,9 @@ Terraform for the CraftCV platform. Everything lives in **eu-west-1**.
 | `ecr.tf`           | Private Docker registry CI pushes to                             |
 | `codebuild.tf`     | Phase 5 - the CI project, its service role and GitHub connection |
 | `deploy.tf`        | Phase 6 - the SSM document that deploys to the instance          |
+| `codebuild_frontend.tf` | CI for CraftCV-frontend                                    |
+| `deploy_frontend.tf`    | SSM document that publishes the frontend                   |
+| `frontend_artifacts.tf` | Private S3 bucket the frontend build is shipped through    |
 | `schedule.tf`      | Sandbox start/stop schedule, for cost control                    |
 | `scripts/`         | The deploy shell script the SSM document runs                    |
 | `outputs.tf`       | Instance/SG IDs, CI project name, ECR URL, deploy document       |
@@ -419,3 +422,51 @@ scoped to that one instance.
 - **The containers come back on their own.** Both services are
   `restart: unless-stopped`, so Docker brings them up at boot with no
   intervention.
+
+---
+
+## The frontend
+
+CraftCV-frontend is a Nuxt app. nginx on the instance serves both halves
+from one origin:
+
+```
+/        the generated Nuxt site, static files under /var/www/craftcv
+/api/    Django, proxied to 127.0.0.1:8000
+/admin/  Django admin, same proxy
+```
+
+One origin is the point. The browser only calls the host it loaded the page
+from, so `runtimeConfig.public.apiBase` is the relative path `/api` and no
+server address is baked into the bundle. That matters because the sandbox
+restarts nightly on a new public IP, and a static build bakes its
+configuration in at build time - a hardcoded address would need a rebuild,
+not a restart, to fix. It also means the two halves need no CORS between
+them.
+
+### The instance does not build the frontend
+
+CodeBuild generates the site, uploads it to
+`s3://craftcv-frontend-artifacts-<account>/builds/<commit>/`, and the SSM
+document syncs it down. The bucket is private; this is an artifact store, not
+website hosting.
+
+Building on the box cost 364MB of node_modules, an 84MB npm cache and a 137MB
+Node runtime to serve 220KB of output, on a 7.6GB disk - and needed 1GB of
+swap to survive a Nuxt build in 914MB of RAM. Syncing costs the 220KB.
+Removing all of it reclaimed 800MB.
+
+Permissions split by direction: the build may `PutObject` under `builds/*`
+and cannot read or delete; the instance may `GetObject` and cannot write.
+
+Publishing swaps the directory into place, so nobody sees a half-copied site,
+and rolls back to the previous one if the new site fails its health check.
+
+### Swap is still needed
+
+1GB of swap remains on the instance. The **backend** still builds its Docker
+image there and uses about 235MB of it. Removing the swap would start failing
+backend deploys.
+
+Swap and the nginx configuration were both applied by hand during this work.
+They belong in user data or an AMI before the instance is ever rebuilt.
