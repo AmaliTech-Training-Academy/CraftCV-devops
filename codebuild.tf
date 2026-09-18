@@ -5,9 +5,9 @@
 #   GitHub (CraftCV-backend) --webhook--> CodeBuild project (eu-west-1)
 #       -> runs buildspec.yml -> quality gates -> docker build -> push to ECR
 #
-# Nothing here holds a long-lived credential. GitHub access comes from an
-# AWS CodeConnections GitHub App connection, and AWS access comes from the
-# CodeBuild service role below.
+# GitHub access comes from a personal access token held in Secrets Manager
+# (see the note on credentials below), and AWS access comes from the CodeBuild
+# service role.
 # ---------------------------------------------------------------------------
 
 # These lookups give us the account ID and region so IAM policies can be
@@ -26,34 +26,37 @@ locals {
 }
 
 # ---------------------------------------------------------------------------
-# GitHub connection (the organization-approved method)
+# GitHub credentials
 #
-# A CodeConnections connection is backed by the AWS Connector GitHub App. AWS
-# holds the short-lived installation token; no personal access token is stored
-# anywhere, so CI does not break when someone leaves the org.
+# CodeBuild needs GitHub credentials for two things: registering the webhook,
+# and cloning the repository on every build.
 #
-# Terraform can only create the connection in PENDING state. A human has to
-# complete the GitHub App handshake once in the console - see README.
+# The organization-approved method is a CodeConnections GitHub App connection,
+# which is what this originally used. Installing that app into
+# AmaliTech-Training-Academy requires an organization owner, which we do not
+# have, and AWS refuses to create the webhook while the connection is PENDING.
+#
+# So we fall back to a personal access token held in Secrets Manager.
+# auth_type SECRETS_MANAGER means Terraform only ever references the secret's
+# ARN - the token itself never enters the configuration, the state file or the
+# repository, and rotating it is an update to the secret with no Terraform run.
+#
+# The tradeoff is real and worth writing down: a PAT belongs to a person, so
+# CI breaks if that account is deprovisioned or the token expires. Prefer a
+# machine account's token, and move back to a connection if an owner ever
+# approves the app.
 # ---------------------------------------------------------------------------
 
-resource "aws_codeconnections_connection" "github" {
-  name          = "${var.project_name}-github"
-  provider_type = "GitHub"
-
-  tags = {
-    Name = "${var.project_name}-github"
-  }
+# Looked up rather than created: the secret is written out of band so the token
+# is never passed through Terraform. See README.
+data "aws_secretsmanager_secret" "github_token" {
+  name = var.github_token_secret_name
 }
 
-# Registers the connection above as the GitHub credential CodeBuild uses in
-# this account/region. Gated because AWS rejects this call while the
-# connection is still PENDING - flip the variable after authorizing.
 resource "aws_codebuild_source_credential" "github" {
-  count = var.github_connection_authorized ? 1 : 0
-
-  auth_type   = "CODECONNECTIONS"
+  auth_type   = "SECRETS_MANAGER"
   server_type = "GITHUB"
-  token       = aws_codeconnections_connection.github.arn
+  token       = data.aws_secretsmanager_secret.github_token.arn
 }
 
 # ---------------------------------------------------------------------------
@@ -77,8 +80,8 @@ resource "aws_cloudwatch_log_group" "codebuild" {
 #
 # The trust policy lets only the CodeBuild service assume it. The permissions
 # policy grants exactly what the build needs (logs, ECR push, test reports,
-# reading the GitHub connection) plus the SSM calls the deploy step in the
-# next phase will need - and nothing else.
+# reading the GitHub token) plus the SSM calls the deploy step in the next
+# phase will need - and nothing else.
 # ---------------------------------------------------------------------------
 
 resource "aws_iam_role" "codebuild" {
@@ -175,38 +178,32 @@ resource "aws_iam_role_policy" "codebuild" {
         Resource = "arn:aws:codebuild:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:report-group/${local.codebuild_project_name}-*"
       },
 
-      # --- Reading the GitHub connection to clone the source ---------------
-      # Both action namespaces are listed because AWS renamed the service
-      # (codestar-connections -> codeconnections) and still authorizes calls
-      # under either name depending on the calling service's vintage.
+      # --- Reading the GitHub token to clone the source --------------------
       {
-        Sid    = "UseGitHubConnection"
+        Sid    = "ReadGitHubToken"
         Effect = "Allow"
         Action = [
-          "codeconnections:GetConnection",
-          "codeconnections:GetConnectionToken",
-          "codeconnections:UseConnection",
-          "codestar-connections:GetConnection",
-          "codestar-connections:GetConnectionToken",
-          "codestar-connections:UseConnection"
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
         ]
-        Resource = [
-          aws_codeconnections_connection.github.arn,
-          replace(aws_codeconnections_connection.github.arn, ":codeconnections:", ":codestar-connections:")
-        ]
+        Resource = data.aws_secretsmanager_secret.github_token.arn
       },
 
-      # --- Deployment (next phase) -----------------------------------------
+      # --- Deployment ------------------------------------------------------
       # Deploys run as an SSM command on the app instance, so there is still
-      # no SSH key and no inbound port 22. Scoped to the one instance and the
-      # one SSM document we actually invoke.
+      # no SSH key and no inbound port 22.
+      #
+      # Scoped to the craftcv-deploy document specifically, NOT to
+      # AWS-RunShellScript. That distinction is the whole point: the build
+      # role can run the reviewed deploy procedure on one instance, and
+      # cannot run arbitrary shell anywhere.
       {
-        Sid    = "DeployViaSsmRunCommand"
+        Sid    = "DeployViaSsmDocument"
         Effect = "Allow"
         Action = "ssm:SendCommand"
         Resource = [
           "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:instance/${aws_instance.craftcv_app.id}",
-          "arn:aws:ssm:${data.aws_region.current.name}::document/AWS-RunShellScript"
+          aws_ssm_document.deploy.arn
         ]
       },
       {
@@ -275,6 +272,20 @@ resource "aws_codebuild_project" "backend_ci" {
       name  = "ECR_REPOSITORY_URL"
       value = aws_ecr_repository.app.repository_url
     }
+
+    # Consumed by the deploy step in buildspec.yml.
+    environment_variable {
+      name  = "DEPLOY_DOCUMENT_NAME"
+      value = aws_ssm_document.deploy.name
+    }
+    environment_variable {
+      name  = "DEPLOY_INSTANCE_ID"
+      value = aws_instance.craftcv_app.id
+    }
+    environment_variable {
+      name  = "DEPLOY_BRANCH"
+      value = var.github_default_branch
+    }
   }
 
   # Local caching only - no S3 bucket to manage. The Docker layer cache makes
@@ -301,7 +312,9 @@ resource "aws_codebuild_project" "backend_ci" {
     # branch protection rule block a failing PR from merging.
     report_build_status = true
 
-    git_clone_depth = 1
+    # Full history, not a shallow clone: the convention checks compare the
+    # pull request's commits against its base branch, which needs both.
+    git_clone_depth = 0
   }
 
   source_version = var.github_default_branch
@@ -323,12 +336,10 @@ resource "aws_codebuild_project" "backend_ci" {
 #
 # Builds on every push to develop or main, and on every pull request
 # targeting either - the same triggers as the repo's Actions workflow.
-# Depends on the source credential, so it is gated the same way.
+# The credential must exist first or CodeBuild cannot register the hook.
 # ---------------------------------------------------------------------------
 
 resource "aws_codebuild_webhook" "backend_ci" {
-  count = var.github_connection_authorized ? 1 : 0
-
   project_name = aws_codebuild_project.backend_ci.name
   build_type   = "BUILD"
 

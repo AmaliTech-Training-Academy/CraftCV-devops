@@ -38,3 +38,27 @@ resource "aws_iam_instance_profile" "ec2_ssm_profile" {
   name = "${var.project_name}-ec2-ssm-profile"
   role = aws_iam_role.ec2_ssm_role.name
 }
+
+# The deploy fetches from a private GitHub repository, so the instance needs
+# to read the same token CodeBuild uses. Scoped to that one secret: the
+# instance can read it and nothing else in Secrets Manager.
+
+resource "aws_iam_role_policy" "ec2_read_github_token" {
+  name = "${var.project_name}-ec2-read-github-token"
+  role = aws_iam_role.ec2_ssm_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ReadGitHubToken"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Resource = data.aws_secretsmanager_secret.github_token.arn
+      }
+    ]
+  })
+}

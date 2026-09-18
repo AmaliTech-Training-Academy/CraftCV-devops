@@ -9,3 +9,14 @@
 
 crash.log
 crash.*.log
+
+# Saved plans. They embed full resource attributes, so they can leak values
+# that are not in the config, and they go stale the moment state moves.
+*.tfplan
+
+# State now lives in S3 (see README). These local files are leftovers from the
+# old committed-state setup and must never go back into git: state can contain
+# secrets, cannot be locked in a repo, and is stale the moment anyone applies.
+terraform.tfstate
+terraform.tfstate.*
+tfplan

@@ -36,6 +36,12 @@ variable "github_repo" {
 
 # CraftCV-backend integrates into develop, not main - that is its default
 # branch and what a manual build checks out.
+variable "github_frontend_repo" {
+  description = "Frontend repository CodeBuild runs quality gates on"
+  type        = string
+  default     = "CraftCV-frontend"
+}
+
 variable "github_default_branch" {
   description = "Repository default branch; what a manual build checks out"
   type        = string
@@ -55,16 +61,87 @@ variable "github_ci_branches" {
   }
 }
 
-# Terraform can create a CodeConnections connection but cannot complete the
-# GitHub App handshake - that is a one-time click in the AWS console. Until
-# it is done, AWS rejects the source-credential and webhook API calls, so
-# they are created on a second apply with this set to true. See README.
-variable "github_connection_authorized" {
-  description = "Set true once the CodeConnections GitHub connection is AVAILABLE"
-  type        = bool
-  default     = false
+# The secret holding the GitHub personal access token CodeBuild authenticates
+# with. It is created out of band (see README) so the token never passes
+# through Terraform, and only its ARN is referenced.
+variable "github_token_secret_name" {
+  description = "Secrets Manager secret holding the GitHub PAT for CodeBuild"
+  type        = string
+  default     = "craftcv/github-token"
 }
 
 # No coverage_min variable: CraftCV-backend's gate is `manage.py test`, which
 # enforces no coverage threshold. Add one here only if the suite moves to a
 # runner that measures coverage.
+
+# --- Deployment (Phase 6) -------------------------------------------------
+
+# Note the name: this directory holds the *application* checkout, despite
+# being called CraftCV-devops. It was cloned under the wrong name before this
+# phase and is left alone rather than renamed, because the running compose
+# stack refers to it. Worth correcting the next time the box is rebuilt.
+variable "deploy_app_dir" {
+  description = "Directory on the instance that docker compose runs from"
+  type        = string
+  default     = "/opt/craftcv/CraftCV-devops"
+}
+
+# --- Sandbox schedule -----------------------------------------------------
+
+variable "deploy_frontend_dir" {
+  description = "Frontend checkout on the instance"
+  type        = string
+  default     = "/opt/craftcv/CraftCV-frontend"
+}
+
+variable "frontend_web_root" {
+  description = "Directory nginx serves the generated frontend from"
+  type        = string
+  default     = "/var/www/craftcv"
+}
+
+variable "sandbox_schedule_enabled" {
+  description = "Whether the start/stop schedules are active"
+  type        = bool
+  default     = true
+}
+
+variable "sandbox_start_hour" {
+  description = "Hour of day the sandbox starts, 0-23, in sandbox_schedule_timezone"
+  type        = number
+  default     = 6
+
+  validation {
+    condition     = var.sandbox_start_hour >= 0 && var.sandbox_start_hour <= 23
+    error_message = "sandbox_start_hour must be an hour between 0 and 23."
+  }
+}
+
+variable "sandbox_stop_hour" {
+  description = "Hour of day the sandbox stops, 0-23, in sandbox_schedule_timezone"
+  type        = number
+  default     = 18
+
+  validation {
+    condition     = var.sandbox_stop_hour >= 0 && var.sandbox_stop_hour <= 23
+    error_message = "sandbox_stop_hour must be an hour between 0 and 23."
+  }
+}
+
+# Africa/Accra, not the eu-west-1 region's local time. The people using this
+# sandbox are in Ghana, and Accra has no daylight saving, so 06:00 stays 06:00
+# all year. Set this to Europe/Dublin if the schedule should instead follow
+# the region, and accept that the wall-clock time then shifts twice a year.
+variable "sandbox_schedule_timezone" {
+  description = "IANA timezone the start/stop hours are interpreted in"
+  type        = string
+  default     = "Africa/Accra"
+}
+
+# Every day by default. Set to "MON-FRI" to leave it off at weekends, which
+# roughly doubles the saving if nobody works then.
+variable "sandbox_schedule_days" {
+  description = "Cron day-of-week field: * for daily, MON-FRI for weekdays"
+  type        = string
+  default     = "*"
+}
