@@ -28,14 +28,14 @@ output "codebuild_role_arn" {
   value       = aws_iam_role.codebuild.arn
 }
 
-output "github_connection_arn" {
-  description = "Authorize this connection in the console before the first build"
-  value       = aws_codeconnections_connection.github.arn
+output "github_token_secret_arn" {
+  description = "Secret CodeBuild reads the GitHub token from"
+  value       = data.aws_secretsmanager_secret.github_token.arn
 }
 
-output "github_connection_status" {
-  description = "PENDING until the GitHub App handshake is completed, then AVAILABLE"
-  value       = aws_codeconnections_connection.github.connection_status
+output "webhook_payload_url" {
+  description = "Endpoint CodeBuild registered on the GitHub repository"
+  value       = aws_codebuild_webhook.backend_ci.payload_url
 }
 
 output "ecr_repository_url" {

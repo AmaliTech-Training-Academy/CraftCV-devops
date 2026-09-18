@@ -105,12 +105,65 @@ craftcv-backend-ci  ── CodeBuild, eu-west-1, privileged_mode = true
 point rather than redefining the gates, which is what keeps a green local run,
 a green Actions run and a green build meaning the same thing.
 
-### Why a CodeConnections connection
+### How CodeBuild authenticates to GitHub
 
-`aws_codeconnections_connection` is backed by the AWS Connector GitHub App.
-AWS mints a short-lived installation token per build, so no personal access
-token is stored in Secrets Manager, in the project, or on a developer laptop -
-and CI does not break when whoever created it leaves the organization.
+The organization-approved method is an AWS CodeConnections GitHub App
+connection, and that is what this was built with first. It did not survive
+contact with reality: installing the AWS Connector app into
+`AmaliTech-Training-Academy` needs an organization owner, and AWS refuses to
+create the webhook while the connection sits at `PENDING`:
+
+```
+InvalidInputException: Connection craftcv-github is not available
+```
+
+So CodeBuild authenticates with a GitHub personal access token held in
+Secrets Manager (`auth_type = "SECRETS_MANAGER"`). Terraform references only
+the secret's ARN, so the token never enters the configuration, the state file
+or this repository, and rotating it is an update to the secret with no
+Terraform run at all.
+
+**The tradeoff is real.** A PAT belongs to a person: CI breaks silently when
+that account is deprovisioned or the token expires. Prefer a machine account's
+token, diary the expiry, and move back to a connection if an owner ever
+approves the app - the code for it is in this repo's history.
+
+#### The secret's format
+
+CodeBuild does not accept a bare token. The secret must hold this exact JSON,
+or `CreateWebhook` fails with `was not in the expected json format`:
+
+```json
+{"ServerType":"GITHUB","AuthType":"PERSONAL_ACCESS_TOKEN","Token":"ghp_..."}
+```
+
+The token needs the `repo` and `admin:repo_hook` scopes - `repo` to clone the
+private repository and post commit statuses, `admin:repo_hook` to register the
+webhook. It must be a classic token; fine-grained tokens against an
+organization's repositories generally need owner approval, which is the
+problem we are working around.
+
+To create or rotate it, in your own terminal (never through a tool that logs
+its input):
+
+```bash
+read -rs -p "Paste GitHub PAT: " PAT && echo
+python3 -c "import json,os;print(json.dumps({'ServerType':'GITHUB','AuthType':'PERSONAL_ACCESS_TOKEN','Token':os.environ['PAT']}))"   > /tmp/tok.json
+PAT="$PAT" aws secretsmanager put-secret-value --secret-id craftcv/github-token   --region eu-west-1 --secret-string file:///tmp/tok.json
+shred -u /tmp/tok.json; unset PAT
+```
+
+#### A first apply may need one retry
+
+CodeBuild checks that the service role can read the secret at the moment
+`CreateWebhook` runs. On a from-scratch apply that happens a second after the
+IAM policy is written, and IAM is eventually consistent, so it can fail with:
+
+```
+Project service role does not have access to retrieve secret ...
+```
+
+Nothing is wrong - run `terraform apply` again and it succeeds.
 
 ### Docker support
 

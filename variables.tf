@@ -55,14 +55,13 @@ variable "github_ci_branches" {
   }
 }
 
-# Terraform can create a CodeConnections connection but cannot complete the
-# GitHub App handshake - that is a one-time click in the AWS console. Until
-# it is done, AWS rejects the source-credential and webhook API calls, so
-# they are created on a second apply with this set to true. See README.
-variable "github_connection_authorized" {
-  description = "Set true once the CodeConnections GitHub connection is AVAILABLE"
-  type        = bool
-  default     = false
+# The secret holding the GitHub personal access token CodeBuild authenticates
+# with. It is created out of band (see README) so the token never passes
+# through Terraform, and only its ARN is referenced.
+variable "github_token_secret_name" {
+  description = "Secrets Manager secret holding the GitHub PAT for CodeBuild"
+  type        = string
+  default     = "craftcv/github-token"
 }
 
 # No coverage_min variable: CraftCV-backend's gate is `manage.py test`, which
