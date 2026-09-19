@@ -383,17 +383,34 @@ its role. Worth doing; out of scope for this phase.
 
 ## Sandbox schedule
 
-The app server is a sandbox, so it does not need to run overnight. Two
-EventBridge schedules power it on and off:
+The app server is a sandbox, so it does not need to run overnight or at the
+weekend. Two EventBridge schedules power it on and off:
 
 ```
-06:00 Africa/Accra  start  craftcv-app-server
-18:00 Africa/Accra  stop   craftcv-app-server
+06:00 Africa/Accra  Mon-Fri    start  craftcv-app-server
+18:00 Africa/Accra  every day  stop   craftcv-app-server
 ```
 
-Twelve hours a day instead of twenty-four, so roughly half the instance cost.
-Change `sandbox_start_hour`, `sandbox_stop_hour`, `sandbox_schedule_days`
-(`MON-FRI` to also skip weekends) or `sandbox_schedule_timezone`, or set
+Twelve hours a weekday instead of twenty-four, and nothing across Saturday
+and Sunday.
+
+The asymmetry between the two is deliberate. The start is `MON-FRI`, so the
+weekend stays off unless somebody turns it on. The stop runs every day, so
+an instance started by hand on a Saturday is still stopped that evening
+instead of running until Monday - the exact runaway the schedule exists to
+prevent. A stop with nothing to stop is free and harmless.
+
+To work at the weekend, start it by hand; the 18:00 stop will catch it that
+same evening.
+
+```
+aws ec2 start-instances \
+  --instance-ids "$(terraform output -raw instance_id)" \
+  --region eu-west-1
+```
+
+Change `sandbox_start_hour`, `sandbox_stop_hour`, `sandbox_start_days`,
+`sandbox_stop_days` or `sandbox_schedule_timezone`, or set
 `sandbox_schedule_enabled = false` to suspend it entirely without destroying
 anything.
 
@@ -409,19 +426,18 @@ scoped to that one instance.
 
 ### Three consequences to expect
 
-- **The public IP changes on every restart.** There is no Elastic IP, so
-  anything pointing at the old address breaks each morning. Read the current
-  one from `terraform output instance_public_ip`. An Elastic IP would pin it,
-  but AWS bills for an EIP while it is *not* attached to a running instance,
-  which is exactly the window this schedule creates - so it would eat into
-  the saving it is meant to protect.
 - **Deploys fail while it is off.** `ssm:SendCommand` to a stopped instance
-  goes nowhere, so a merge to develop after 18:00 produces a red build. The
-  build is correct to fail: nothing was deployed. Re-run it after 06:00, or
-  start the instance by hand.
+  goes nowhere, so a merge to develop after 18:00, or at any point over the
+  weekend, produces a red build. The build is correct to fail: nothing was
+  deployed. Re-run it after the next 06:00 start, or start the instance by
+  hand and re-run it then.
 - **The containers come back on their own.** Both services are
   `restart: unless-stopped`, so Docker brings them up at boot with no
-  intervention.
+  intervention - including Monday morning, after the weekend off.
+- **The address survives the stop.** An Elastic IP is associated with the
+  instance (`eip.tf`), so it keeps the same public IP and the same
+  `ec2-<dashed-ip>.eu-west-1.compute.amazonaws.com` hostname across every
+  restart. Nothing pointing at it breaks on Monday.
 
 ---
 
