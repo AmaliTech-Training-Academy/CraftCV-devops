@@ -232,3 +232,17 @@ variable "project_end_date" {
     error_message = "project_end_date must be YYYY-MM-DD."
   }
 }
+
+# PDFs are a cache of something the database can regenerate, and they hold
+# personal details, so they do not linger. A week covers "I downloaded this
+# on Monday and want it again on Friday" and nothing beyond that.
+variable "pdf_retention_days" {
+  description = "Days a generated CV PDF is kept in S3 before it expires"
+  type        = number
+  default     = 7
+
+  validation {
+    condition     = var.pdf_retention_days >= 1 && var.pdf_retention_days <= 42
+    error_message = "pdf_retention_days must be between 1 and 42 - the project runs six weeks and nothing here should outlive it."
+  }
+}

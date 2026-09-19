@@ -40,6 +40,45 @@ log "lock acquired (pid $$)"
 [ -d "${APP_DIR}/.git" ] || fail "no git checkout at ${APP_DIR}"
 cd "${APP_DIR}"
 
+# --- Swap -----------------------------------------------------------------
+# t3.micro has 1 GiB and Ubuntu gives it no swap. Postgres, two gunicorn
+# workers, nginx and a docker build already crowd that, and server-side PDF
+# rendering will crowd it further. With no swap the kernel's OOM killer picks
+# a victim instead - usually the web container, mid-request. Swap turns an
+# out-of-memory kill into a slow request, which is a far better failure.
+#
+# Idempotent by design: it creates the file once, records it in fstab so it
+# survives the nightly stop/start, and is a no-op on every later deploy. A
+# replaced instance gets it back on its first deploy.
+SWAP_FILE=/swapfile
+SWAP_MB=2048
+
+if swapon --show --noheadings 2>/dev/null | grep -q .; then
+  log "swap already active"
+else
+  log "no swap active - creating ${SWAP_MB}MB at ${SWAP_FILE}"
+  if [ ! -f "$SWAP_FILE" ]; then
+    fallocate -l "${SWAP_MB}M" "$SWAP_FILE" 2>/dev/null ||
+      dd if=/dev/zero of="$SWAP_FILE" bs=1M count="$SWAP_MB" status=none ||
+      fail "could not allocate ${SWAP_FILE}"
+    chmod 600 "$SWAP_FILE"
+    mkswap "$SWAP_FILE" >/dev/null || fail "mkswap failed on ${SWAP_FILE}"
+  fi
+  # A failure to enable swap must not fail an otherwise good deploy - the
+  # box ran without it until now.
+  if swapon "$SWAP_FILE"; then
+    grep -q "^${SWAP_FILE} " /etc/fstab || echo "${SWAP_FILE} none swap sw 0 0" >> /etc/fstab
+    log "swap enabled: $(free -m | awk '/Swap:/ {print $2"MB"}')"
+  else
+    log "WARNING: could not enable swap - continuing without it"
+  fi
+fi
+
+# Prefer RAM and treat swap as the safety net it is, rather than letting the
+# kernel page out a busy Postgres. Cheap to re-apply on every deploy.
+sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
+echo 'vm.swappiness=10' > /etc/sysctl.d/99-craftcv.conf 2>/dev/null || true
+
 # --- Fetch and reset to the intended revision -----------------------------
 # set-url is idempotent and deliberate: it also scrubs any credential that a
 # previous setup embedded in the remote URL.

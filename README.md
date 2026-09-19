@@ -16,6 +16,10 @@ Terraform for the CraftCV platform. Everything lives in **eu-west-1**.
 | `deploy_frontend.tf`    | SSM document that publishes the frontend                   |
 | `frontend_artifacts.tf` | Private S3 bucket the frontend build is shipped through    |
 | `schedule.tf`      | Sandbox start/stop schedule, for cost control                    |
+| `eip.tf`           | Elastic IP, so the address survives the nightly stop             |
+| `backup.tf`        | Nightly database dump to S3, and the restore document            |
+| `pdf_storage.tf`   | Private S3 bucket the generated CV PDFs are cached in            |
+| `budget.tf`        | Spend alerts, so a runaway is noticed in days not months         |
 | `scripts/`         | The deploy shell script the SSM document runs                    |
 | `outputs.tf`       | Instance/SG IDs, CI project name, ECR URL, deploy document       |
 
