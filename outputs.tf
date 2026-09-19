@@ -96,3 +96,8 @@ output "project_end_date" {
   description = "Date everything here should be destroyed; nothing enforces this"
   value       = var.project_end_date
 }
+
+output "cv_pdf_bucket" {
+  description = "Bucket the backend writes generated CV PDFs to"
+  value       = aws_s3_bucket.cv_pdfs.id
+}
